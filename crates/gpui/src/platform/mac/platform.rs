@@ -1103,11 +1103,42 @@ impl Platform for MacPlatform {
         let state = self.0.lock();
         let pasteboard = state.pasteboard;
 
-        // First, see if it's a string.
+        // First, see if it's a file url.
         unsafe {
             let types: id = pasteboard.types();
             let string_type: id = ns_string("public.utf8-plain-text");
+            let file_type: id = ns_string("public.file-url");
 
+            if msg_send![types, containsObject:file_type] {
+                let data = pasteboard.dataForType(file_type);
+                if data == nil {
+                    return None;
+                } else if data.bytes().is_null() {
+                    // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
+                    // "If the length of the NSData object is 0, this property returns nil."
+                    return Some(self.read_string_from_clipboard(&state, &[]));
+                } else {
+                    // Have to decode the path by creating NSURL
+                    let path = NSURL::alloc(nil)
+                        .initWithDataRepresentation_relativeToURL_(data, nil)
+                        .autorelease()
+                        .path(); /* (NSString) or nil */
+                    if path == nil {
+                        return Some(self.read_string_from_clipboard(&state, &[]));
+                    }
+
+                    let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+                    let bytes = path.UTF8String() as *const u8;
+                    let path =
+                        str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap_or_default();
+
+                    let clipboard_str = shell_escape_str(path);
+
+                    return Some(self.read_string_from_clipboard(&state, clipboard_str.as_bytes()));
+                }
+            }
+
+            // Then see if it is a string.
             if msg_send![types, containsObject: string_type] {
                 let data = pasteboard.dataForType(string_type);
                 if data == nil {
@@ -1350,6 +1381,51 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
             None
         }
     }
+}
+
+/// Escape a path for safe usage in the macOS Terminal / POSIX shell.
+/// This mimics what happens when you copy from Finder and paste into Terminal.
+/// Posix shell quoting rules: https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#tag_19_02
+fn shell_escape_str(shell_str: &str) -> String {
+    let mut escaped = String::with_capacity(shell_str.len());
+
+    for ch in shell_str.chars() {
+        match ch {
+            // Whitespace
+            ' ' => escaped.push_str("\\ "),
+            '\t' => escaped.push_str("\\t"),
+            '\n' => escaped.push_str("\\n"),
+            // Shell metacharacters
+            '"' => escaped.push_str("\\\""),
+            '\'' => escaped.push_str("\\'"),
+            '\\' => escaped.push_str("\\\\"),
+            '$' => escaped.push_str("\\$"),
+            '`' => escaped.push_str("\\`"),
+            '!' => escaped.push_str("\\!"),
+            '#' => escaped.push_str("\\#"),
+            '&' => escaped.push_str("\\&"),
+            '*' => escaped.push_str("\\*"),
+            '(' => escaped.push_str("\\("),
+            ')' => escaped.push_str("\\)"),
+            '[' => escaped.push_str("\\["),
+            ']' => escaped.push_str("\\]"),
+            '{' => escaped.push_str("\\{"),
+            '}' => escaped.push_str("\\}"),
+            '|' => escaped.push_str("\\|"),
+            ';' => escaped.push_str("\\;"),
+            '<' => escaped.push_str("\\<"),
+            '>' => escaped.push_str("\\>"),
+            '~' => escaped.push_str("\\~"),
+            '?' => escaped.push_str("\\?"),
+            '=' => escaped.push_str("\\="),
+            '%' => escaped.push_str("\\%"),
+            ',' => escaped.push_str("\\,"),
+            '^' => escaped.push_str("\\^"),
+            // Default: pass through unchanged
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 unsafe fn path_from_objc(path: id) -> PathBuf {
