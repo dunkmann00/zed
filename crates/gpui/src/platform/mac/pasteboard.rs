@@ -110,7 +110,7 @@ impl Pasteboard {
                     return Some(self.read_string(clipboard_str));
                 }
                 (_, Some(clipboard_url)) => {
-                    return Some(self.read_url(&[], clipboard_url));
+                    return Some(self.read_url(clipboard_url, &[]));
                 }
                 _ => {}
             }
@@ -231,6 +231,7 @@ impl Pasteboard {
                     self.write_image(image);
                 }
                 [ClipboardEntry::ExternalPaths(_)] => {}
+                [ClipboardEntry::URL { path: _, string: _ }] => {}
                 _ => {
                     // Agus NB: We're currently only writing string entries to the clipboard when we have more than one.
                     //
@@ -431,7 +432,10 @@ impl UTType {
 
 #[cfg(test)]
 mod tests {
-    use cocoa::{appkit::NSPasteboardTypeString, foundation::NSData};
+    use cocoa::{
+        appkit::NSPasteboardTypeString,
+        foundation::{NSArray, NSData},
+    };
 
     use crate::{ClipboardEntry, ClipboardItem, ClipboardString};
 
@@ -468,6 +472,29 @@ mod tests {
         assert_eq!(
             pasteboard.read(),
             Some(ClipboardItem::new_string(text_from_other_app.to_string()))
+        );
+    }
+
+    #[test]
+    fn test_url() {
+        let pasteboard = Pasteboard::unique();
+
+        let url_from_other_app = "/Users/whoami/Documents";
+        unsafe {
+            let path = NSString::alloc(nil)
+                .init_str(url_from_other_app)
+                .autorelease();
+            let url = NSURL::fileURLWithPath_(nil, path);
+            pasteboard
+                .inner
+                .writeObjects(NSArray::arrayWithObject(nil, url));
+        }
+        assert_eq!(
+            pasteboard.read(),
+            Some(ClipboardItem::new_url(
+                url_from_other_app.to_string(),
+                "".to_string()
+            ))
         );
     }
 }
