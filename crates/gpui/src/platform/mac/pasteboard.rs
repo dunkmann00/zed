@@ -481,9 +481,7 @@ mod tests {
 
         let url_from_other_app = "/Users/whoami/Documents";
         unsafe {
-            let path = NSString::alloc(nil)
-                .init_str(url_from_other_app)
-                .autorelease();
+            let path = ns_string(url_from_other_app);
             let url = NSURL::fileURLWithPath_(nil, path);
             pasteboard
                 .inner
